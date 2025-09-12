@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Управление котлом</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Термостат</h1>
+
+        <div class="status-cards">
+            <div class="card water-temp">
+                <h2>Температура воздуха</h2>
+                <div class="value" id="roomTemperature">-- &deg;C</div>
+            </div>
+        </div>
+
+        <div class="button-controls">
+            <div class="button-group">
+                <div class="button-item">
+                    <h3>Отопление</h3>
+                    <button id="btn1" class="toggle-btn" onclick="toggleButton(1)">
+                        LOADING...
+                    </button>
+                </div>
+                <div class="button-item">
+                    <h3>Вода</h3>
+                    <button id="btn2" class="toggle-btn" onclick="toggleButton(2)">
+                        LOADING...
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <h2>Уставка</h2>
+            <div class="slider-value" id="currentSliderValue">23</div>
+            <input type="range" id="slider" min="20" max="55" value="23" class="slider">
+            <button onclick="updateSlider()">Обновить уставку</button>
+        </div>
+
+        <div class="status-cards">
+            <div class="card steam-temp">
+                <h2>Отопление</h2>
+                <div class="value" id="steamTemperature">-- &deg;C</div>
+            </div>
+
+            <div class="card water-temp">
+                <h2>Горячая вода</h2>
+                <div class="value" id="waterTemperature">-- &deg;C</div>
+            </div>
+
+            <div class="card">
+                <h2>Пламя</h2>
+                <div class="value" id="flameState">--</div>
+            </div>
+            <div class="button-group">
+                <div class="button-item">
+                    <h3>Отопление</h3>
+                    <button id="btn3" class="toggle-btn" onclick="toggleModeButton(3)">
+                        LOADING...
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let roomTempData = [];
+        let waterTempData = [];
+        let steamTempData = [];
+        let timeLabels = [];
+        let flameState = false;
+        let buttonStates = { 1: false, 2: false, 3: false };
+
+        //update range of slider
+        function updateSliderRange(mode) {
+            const slider = document.getElementById('slider');
+            if (mode) {
+                    slider.min = 20;
+                    slider.max = 25;
+                } else {
+                    slider.min = 45;
+                    slider.max = 53;
+                }
+        }
+
+        // Get initial button states from ESP8266
+        async function getInitialButtonStates() {
+            try {
+                const response = await fetch('/buttonStates');
+                const data = await response.json();
+
+                buttonStates[1] = data.button1;
+                buttonStates[2] = data.button2;
+                buttonStates[3] = data.button3;
+
+                document.getElementById('currentSliderValue').textContent = data.sliderValue;
+                document.getElementById('slider').value = data.sliderValue;
+                
+                updateSliderRange(buttonStates[3]);
+
+                // Update button appearances
+                updateButtonAppearance(1, data.button1);
+                updateButtonAppearance(2, data.button2);
+                updateModeAppearance(3, data.button3);
+
+                // Update status displays
+                //document.getElementById('button1State').textContent = data.button1 ? 'ВКЛ' : 'ВЫКЛ';
+                //document.getElementById('button2State').textContent = data.button2 ? 'ВКЛ' : 'ВЫКЛ';
+
+                console.log('Initial button states loaded:', data);
+
+            } catch (error) {
+                console.error('Error loading initial button states:', error);
+                // Set default states if loading fails
+                updateButtonAppearance(1, false);
+                updateButtonAppearance(2, false);
+                updateButtonAppearance(3, false);
+            }
+        }
+
+        // Update data from ESP8266
+        async function updateData() {
+            try {
+                const response = await fetch('/data');
+                const data = await response.json();
+
+                // Update temperature displays
+                document.getElementById('roomTemperature').textContent = data.roomTemp.toFixed(1) + ' °C';
+                document.getElementById('waterTemperature').textContent = data.waterTemp.toFixed(1) + ' °C';
+                document.getElementById('steamTemperature').textContent = data.steamTemp.toFixed(1) + ' °C';
+                //document.getElementById('sliderValue').textContent = data.sliderValue;
+                //document.getElementById('button1State').textContent = data.button1 ? 'ON' : 'OFF';
+                //document.getElementById('button2State').textContent = data.button2 ? 'ON' : 'OFF';
+                document.getElementById('flameState').textContent = data.flame ? 'ВКЛ' : 'ВЫКЛ';
+
+                // Keep local button states in sync with server
+                flameState = data.flame;
+                buttonStates[1] = data.button1;
+                buttonStates[2] = data.button2;
+                buttonStates[3] = data.button3;
+                updateButtonAppearance(1, data.button1);
+                updateButtonAppearance(2, data.button2);
+                updateModeAppearance(3, data.button3);
+                
+                //update range of slider
+                updateSliderRange(buttonStates[3]);
+
+
+            } catch (error) {
+                console.error('Error fetching data:', error);
+            }
+        }
+
+        // Update slider value on ESP8266
+        async function updateSlider() {
+            const slider = document.getElementById('slider');
+            const value = parseInt(slider.value);
+
+            try {
+                const response = await fetch('/update', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ slider: value })
+                });
+
+                if (response.ok) {
+                    console.log('Slider updated successfully');
+                }
+            } catch (error) {
+                console.error('Error updating slider:', error);
+            }
+        }
+
+        // Toggle button state
+        async function toggleButton(buttonNumber) {
+            const newState = !buttonStates[buttonNumber];
+
+            try {
+                const response = await fetch('/button' + buttonNumber, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ state: newState })
+                });
+
+                if (response.ok) {
+                    buttonStates[buttonNumber] = newState;
+                    updateButtonAppearance(buttonNumber, newState);
+                    //document.getElementById('button' + buttonNumber + 'State').textContent = newState ? 'ВКЛ' : 'ВЫКЛ';
+                    console.log('Button ' + buttonNumber + ' toggled to:', newState);
+                }
+            } catch (error) {
+                console.error('Error toggling button:', error);
+            }
+        }
+
+        // Toggle mode button state
+        async function toggleModeButton(buttonNumber) {
+            const newState = !buttonStates[buttonNumber];
+
+            try {
+                const response = await fetch('/button' + buttonNumber, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ state: newState })
+                });
+
+                if (response.ok) {
+                    buttonStates[buttonNumber] = newState;
+                    updateModeAppearance(buttonNumber, newState);
+                    //document.getElementById('button' + buttonNumber + 'State').textContent = newState ? 'АВТО' : 'РУЧ';
+                    console.log('Button ' + buttonNumber + ' toggled to:', newState);
+                }
+            } catch (error) {
+                console.error('Error toggling mode button:', error);
+            }
+        }
+
+
+        // Update button appearance
+        function updateButtonAppearance(buttonNumber, state) {
+            const button = document.getElementById('btn' + buttonNumber);
+            button.textContent = state ? 'ВКЛ' : 'ВЫКЛ';
+            button.style.background = state ?
+                'linear-gradient(135deg, #4CAF50 0%, #45a049 100%)' :
+                'linear-gradient(135deg, #f44336 0%, #da190b 100%)';
+        }
+
+        // Update button mode appearance
+        function updateModeAppearance(buttonNumber, state) {
+            const button = document.getElementById('btn' + buttonNumber);
+            button.textContent = state ? 'АВТО' : 'РУЧ';
+            button.style.background = state ?
+                'linear-gradient(135deg, #4CAF50 0%, #45a049 100%)' :
+                'linear-gradient(135deg, #f44336 0%, #da190b 100%)';
+        }
+
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', async function () {
+            // Load initial button states first
+            await getInitialButtonStates();
+
+
+            // Then start regular data updates
+            setInterval(updateData, 2000);
+
+            // Update slider display
+            const slider = document.getElementById('slider');
+            const sliderValueDisplay = document.getElementById('currentSliderValue');
+
+            slider.addEventListener('input', function () {
+                sliderValueDisplay.textContent = this.value;
+            });
+
+            // Initial data fetch
+            updateData();
+        });
+    </script>
+</body>
+
+</html>

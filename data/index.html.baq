@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP8266 Temperature Monitoring</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>ESP8266 Temperature Monitoring</h1>
+        
+        <div class="status-cards">
+            <div class="card water-temp">
+                <h2>Water Temperature</h2>
+                <div class="value" id="waterTemperature">-- °C</div>
+            </div>
+            
+            <div class="card steam-temp">
+                <h2>Steam Temperature</h2>
+                <div class="value" id="steamTemperature">-- °C</div>
+            </div>
+            
+            <div class="card">
+                <h2>Slider Value</h2>
+                <div class="value" id="sliderValue">--</div>
+            </div>
+            
+            <div class="card">
+                <h2>Button 1</h2>
+                <div class="value" id="button1State">--</div>
+            </div>
+            
+            <div class="card">
+                <h2>Button 2</h2>
+                <div class="value" id="button2State">--</div>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h2>Temperature Trends</h2>
+            <canvas id="temperatureChart"></canvas>
+        </div>
+
+        <div class="controls">
+            <h2>Control Slider</h2>
+            <input type="range" id="slider" min="0" max="100" value="50" class="slider">
+            <div class="slider-value" id="currentSliderValue">50</div>
+            <button onclick="updateSlider()">Update Slider</button>
+        </div>
+
+        <div class="button-controls">
+            <h2>Toggle Buttons</h2>
+            <div class="button-group">
+                <div class="button-item">
+                    <h3>Button 1</h3>
+                    <button id="btn1" class="toggle-btn" onclick="toggleButton(1)">
+                        LOADING...
+                    </button>
+                </div>
+                <div class="button-item">
+                    <h3>Button 2</h3>
+                    <button id="btn2" class="toggle-btn" onclick="toggleButton(2)">
+                        LOADING...
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let waterTempData = [];
+        let steamTempData = [];
+        let timeLabels = [];
+        const maxDataPoints = 20;
+        let chart;
+        let buttonStates = {1: false, 2: false};
+
+        // Initialize chart with two datasets
+        function initChart() {
+            const ctx = document.getElementById('temperatureChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: timeLabels,
+                    datasets: [
+                        {
+                            label: 'Water Temperature (°C)',
+                            data: waterTempData,
+                            borderColor: 'rgb(54, 162, 235)',
+                            backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                            tension: 0.1,
+                            fill: true,
+                            borderWidth: 2
+                        },
+                        {
+                            label: 'Steam Temperature (°C)',
+                            data: steamTempData,
+                            borderColor: 'rgb(255, 99, 132)',
+                            backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                            tension: 0.1,
+                            fill: true,
+                            borderWidth: 2
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            suggestedMin: 15,
+                            suggestedMax: 110,
+                            title: {
+                                display: true,
+                                text: 'Temperature (°C)'
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Time'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        title: {
+                            display: true,
+                            text: 'Water vs Steam Temperature'
+                        }
+                    }
+                }
+            });
+        }
+
+        // Get initial button states from ESP8266
+        async function getInitialButtonStates() {
+            try {
+                const response = await fetch('/buttonStates');
+                const data = await response.json();
+                
+                buttonStates[1] = data.button1;
+                buttonStates[2] = data.button2;
+                
+                // Update button appearances
+                updateButtonAppearance(1, data.button1);
+                updateButtonAppearance(2, data.button2);
+                
+                // Update status displays
+                document.getElementById('button1State').textContent = data.button1 ? 'ON' : 'OFF';
+                document.getElementById('button2State').textContent = data.button2 ? 'ON' : 'OFF';
+                
+                console.log('Initial button states loaded:', data);
+                
+            } catch (error) {
+                console.error('Error loading initial button states:', error);
+                // Set default states if loading fails
+                updateButtonAppearance(1, false);
+                updateButtonAppearance(2, false);
+            }
+        }
+
+        // Update data from ESP8266
+        async function updateData() {
+            try {
+                const response = await fetch('/data');
+                const data = await response.json();
+                
+                // Update temperature displays
+                document.getElementById('waterTemperature').textContent = data.waterTemp.toFixed(1) + ' °C';
+                document.getElementById('steamTemperature').textContent = data.steamTemp.toFixed(1) + ' °C';
+                document.getElementById('sliderValue').textContent = data.sliderValue;
+                document.getElementById('button1State').textContent = data.button1 ? 'ON' : 'OFF';
+                document.getElementById('button2State').textContent = data.button2 ? 'ON' : 'OFF';
+                
+                // Keep local button states in sync with server
+                buttonStates[1] = data.button1;
+                buttonStates[2] = data.button2;
+                updateButtonAppearance(1, data.button1);
+                updateButtonAppearance(2, data.button2);
+                
+                // Update chart with both temperatures
+                const now = new Date();
+                const timeString = now.getMinutes() + ':' + now.getSeconds();
+                
+                waterTempData.push(data.waterTemp);
+                steamTempData.push(data.steamTemp);
+                timeLabels.push(timeString);
+                
+                if (waterTempData.length > maxDataPoints) {
+                    waterTempData.shift();
+                    steamTempData.shift();
+                    timeLabels.shift();
+                }
+                
+                chart.update();
+                
+            } catch (error) {
+                console.error('Error fetching data:', error);
+            }
+        }
+
+        // Update slider value on ESP8266
+        async function updateSlider() {
+            const slider = document.getElementById('slider');
+            const value = parseInt(slider.value);
+            
+            try {
+                const response = await fetch('/update', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ slider: value })
+                });
+                
+                if (response.ok) {
+                    console.log('Slider updated successfully');
+                }
+            } catch (error) {
+                console.error('Error updating slider:', error);
+            }
+        }
+
+        // Toggle button state
+        async function toggleButton(buttonNumber) {
+            const newState = !buttonStates[buttonNumber];
+            
+            try {
+                const response = await fetch('/button' + buttonNumber, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ state: newState })
+                });
+                
+                if (response.ok) {
+                    buttonStates[buttonNumber] = newState;
+                    updateButtonAppearance(buttonNumber, newState);
+                    document.getElementById('button' + buttonNumber + 'State').textContent = newState ? 'ON' : 'OFF';
+                    console.log('Button ' + buttonNumber + ' toggled to:', newState);
+                }
+            } catch (error) {
+                console.error('Error toggling button:', error);
+            }
+        }
+
+        // Update button appearance
+        function updateButtonAppearance(buttonNumber, state) {
+            const button = document.getElementById('btn' + buttonNumber);
+            button.textContent = state ? 'ON' : 'OFF';
+            button.style.background = state ? 
+                'linear-gradient(135deg, #4CAF50 0%, #45a049 100%)' : 
+                'linear-gradient(135deg, #f44336 0%, #da190b 100%)';
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', async function() {
+            initChart();
+            
+            // Load initial button states first
+            await getInitialButtonStates();
+            
+            // Then start regular data updates
+            setInterval(updateData, 2000);
+            
+            // Update slider display
+            const slider = document.getElementById('slider');
+            const sliderValueDisplay = document.getElementById('currentSliderValue');
+            
+            slider.addEventListener('input', function() {
+                sliderValueDisplay.textContent = this.value;
+            });
+            
+            // Initial data fetch
+            updateData();
+        });
+    </script>
+</body>
+</html>
