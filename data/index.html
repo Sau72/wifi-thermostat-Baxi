@@ -76,18 +76,25 @@
         let steamTempData = [];
         let timeLabels = [];
         let flameState = false;
+        let flagUpdateSlider = false;
         let buttonStates = { 1: false, 2: false, 3: false };
 
         //update range of slider
-        function updateSliderRange(mode) {
+        function updateSliderRange(mode, sliderValue) {
             const slider = document.getElementById('slider');
             if (mode) {
                     slider.min = 20;
-                    slider.max = 25;
+                    slider.max = 25;                    
                 } else {
                     slider.min = 45;
                     slider.max = 53;
-                }
+                }      
+            if (flagUpdateSlider) {
+                slider.value = sliderValue;
+                document.getElementById('currentSliderValue').textContent = sliderValue;
+
+                flagUpdateSlider = false;
+            }         
         }
 
         // Get initial button states from ESP8266
@@ -103,7 +110,8 @@
                 document.getElementById('currentSliderValue').textContent = data.sliderValue;
                 document.getElementById('slider').value = data.sliderValue;
                 
-                updateSliderRange(buttonStates[3]);
+                updateSliderRange(buttonStates[3], data.sliderValue);
+
 
                 // Update button appearances
                 updateButtonAppearance(1, data.button1);
@@ -150,7 +158,7 @@
                 updateModeAppearance(3, data.button3);
                 
                 //update range of slider
-                updateSliderRange(buttonStates[3]);
+                updateSliderRange(buttonStates[3], data.sliderValue);
 
 
             } catch (error) {
@@ -220,6 +228,7 @@
                 if (response.ok) {
                     buttonStates[buttonNumber] = newState;
                     updateModeAppearance(buttonNumber, newState);
+                    flagUpdateSlider = true;
                     //document.getElementById('button' + buttonNumber + 'State').textContent = newState ? 'АВТО' : 'РУЧ';
                     console.log('Button ' + buttonNumber + ' toggled to:', newState);
                 }

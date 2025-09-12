@@ -29,15 +29,118 @@ const int ROOM_TEMP_SENSOR_PIN = 14; //14 for ESP8266 (D5), 18 for ESP32
 WebServer server(80);
 
 // Variables to display
+float sp = 24, //set point
+t = 0, //current temperature
+t_last = 0, //prior temperature
+ierr = 0, //integral error
+dt = 0, //time between measurements
+op = 0; //PID controller output
+unsigned long ts = 0, new_ts = 0; //timestamp
+int enableCentralHeating = false;
+int enableHotWater = false;
+int enableCooling = false;
+bool enableOutsideTemperatureCompensation = false;
+bool enableCentralHeating2 = true;
+int  dhw = 45;
+
+float SP_Auto = 23.0; //setpoint auto mode
+float SP_Man = 47.0; //setpoint manual mode
 float roomTemperature = 25.0;
-float waterTemperature = 47.0;
-float steamTemperature = 100.0;
-int sliderValue = 20;
+float waterTemperature = 47.0;   //DHW temp
+float steamTemperature = 100.0;  //Boiler temp
+int sliderValue = SP_Man;
 bool button1State = false;
 bool button2State = false;
 bool button3State = false;
 bool flameState = false;
 unsigned long lastUpdate = 0;
+
+OneWire oneWire(ROOM_TEMP_SENSOR_PIN);
+DallasTemperature sensors(&oneWire);
+OpenTherm ot(OT_IN_PIN, OT_OUT_PIN);
+
+void ICACHE_RAM_ATTR handleInterrupt() {
+    ot.handleInterrupt();
+}
+
+float getTemp() {
+  return sensors.getTempCByIndex(0);
+}
+
+float pid(float sp, float pv, float pv_last, float& ierr, float dt) {    
+  float KP = 30;
+  float KI = 0.02;  
+  // upper and lower bounds on heater level
+  float ophi = 80;
+  float oplo = 10;
+  // calculate the error
+  float error = sp - pv;
+  // calculate the integral error
+  ierr = ierr + KI * error * dt;  
+
+  // calculate the PID output
+  float P = KP * error; //proportional contribution
+  float I = ierr; //integral contribution  
+  float op = P + I;
+  // implement anti-reset windup
+  if ((op < oplo) || (op > ophi)) {
+    I = I - KI * error * dt;
+    // clip output
+    op = max(oplo, min(ophi, op));
+  }
+  ierr = I; 
+  Serial.println("sp="+String(sp) + " pv=" + String(pv) + " dt=" + String(dt) + " op=" + String(op) + " P=" + String(P) + " I=" + String(I));
+  return op;
+}
+
+void updateData()
+{ 
+  unsigned long response = ot.setBoilerStatus(enableCentralHeating, enableHotWater, enableCooling,enableOutsideTemperatureCompensation,enableCentralHeating2);
+  OpenThermResponseStatus responseStatus = ot.getLastResponseStatus();
+  if (responseStatus != OpenThermResponseStatus::SUCCESS) {
+    Serial.println("Error: Invalid boiler response " + String(response, HEX));
+  }   
+  
+  t = sensors.getTempCByIndex(0);
+  new_ts = millis();
+  dt = (new_ts - ts) / 1000.0;
+  ts = new_ts;
+  //op = sp;
+  if (responseStatus == OpenThermResponseStatus::SUCCESS) {
+    Serial.println("Central Heating: " + 
+            String(ot.isCentralHeatingActive(response) ? "on" : "off"));
+		Serial.println("Hot Water: " + 
+            String(ot.isHotWaterActive(response) ? "on" : "off"));
+		Serial.println("Flame: " + 
+            String(ot.isFlameOn(response) ? "on" : "off"));
+
+    if (button3State){  //auto mode
+      op = pid(sliderValue, t, t_last, ierr, dt);
+    } else {    //manual mode
+      op = sliderValue;
+    }
+    
+    //Set Boiler Temperature    
+    ot.setBoilerTemperature(op);
+    //Set DHW Temp
+    ot.setDHWSetpoint(dhw);
+    //read boiler temp
+    steamTemperature = ot.getBoilerTemperature();
+    waterTemperature = ot.getDHWTemperature();
+    flameState = ot.isFlameOn(response);
+  }
+
+  Serial.println("Set boiler to " + String(op) + " degrees C");
+  t_last = t;
+  roomTemperature = t;
+  sensors.requestTemperatures(); //async temperature request
+  
+  Serial.println("Current temperature is " + String(t) + " degrees C");
+  Serial.println("Current boiler temp is " + String(steamTemperature) + " degrees C");
+  Serial.println("Current DHW temp is " + String(waterTemperature) + " degrees C");
+}
+
+
 
 void setup() {
   Serial.begin(115200);
@@ -48,6 +151,17 @@ void setup() {
     return;
   }
   
+  ot.begin(handleInterrupt);  
+
+  //Init DS18B20 sensor
+  sensors.begin();
+  sensors.requestTemperatures();
+  sensors.setWaitForConversion(false); //switch to async mode
+  t_last = sensors.getTempCByIndex(0);
+  Serial.println(t_last);
+  ts = millis();
+  
+
   // Connect to WiFi
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi");
@@ -95,6 +209,11 @@ void setup() {
       
       if (doc.containsKey("slider")) {
         sliderValue = doc["slider"];
+        if (button3State) {
+          SP_Auto = sliderValue;
+        } else {
+          SP_Man = sliderValue;
+        }
         Serial.print("Slider updated to: ");
         Serial.println(sliderValue);
       }
@@ -110,13 +229,14 @@ void setup() {
       
       if (doc.containsKey("state")) {
         button1State = doc["state"];
+        enableCentralHeating = button1State;
         Serial.print("Button 1 state: ");
         Serial.println(button1State ? "ON" : "OFF");
         
         if (button1State) {
-          Serial.println("Button 1 activated!");
+          Serial.println("Boiler heating activated!");
         } else {
-          Serial.println("Button 1 deactivated!");
+          Serial.println("Boiler heating deactivated!");
         }
       }
       
@@ -131,13 +251,14 @@ void setup() {
       
       if (doc.containsKey("state")) {
         button2State = doc["state"];
+        enableHotWater = button2State;
         Serial.print("Button 2 state: ");
         Serial.println(button2State ? "ON" : "OFF");
         
         if (button2State) {
-          Serial.println("Button 2 activated!");
+          Serial.println("Hot water activated!");
         } else {
-          Serial.println("Button 2 deactivated!");
+          Serial.println("Hot water deactivated!");
         }
       }
       
@@ -149,16 +270,19 @@ void setup() {
     if (server.hasArg("plain")) {
       StaticJsonDocument<200> doc;
       deserializeJson(doc, server.arg("plain"));
-      
+  
       if (doc.containsKey("state")) {
         button3State = doc["state"];
+      
         Serial.print("Button 3 state: ");
         Serial.println(button2State ? "AUTO" : "MAN");
         
         if (button3State) {
-          Serial.println("Button 3 activated!");
+          sliderValue = SP_Auto;
+          Serial.println("Auto mode activated!");
         } else {
-          Serial.println("Button 3 deactivated!");
+          sliderValue = SP_Man;
+          Serial.println("Manual mode deactivated!");
         }
       }
       
@@ -196,12 +320,14 @@ void loop() {
   // Update temperatures every 2 seconds (simulated data)
   if (millis() - lastUpdate > 2000) {
     lastUpdate = millis();
+
+    updateData();
     
     // Simulate temperature changes
-    roomTemperature = 40.0 + (random(0, 150) / 10.0);  // 20-35°C range
-    waterTemperature = 40.0 + (random(0, 150) / 10.0);  // 20-35°C range
-    steamTemperature = 95.0 + (random(0, 100) / 10.0);  // 95-105°C range
-    flameState = true;
+   // roomTemperature = 40.0 + (random(0, 150) / 10.0);  // 20-35°C range
+   // waterTemperature = 40.0 + (random(0, 150) / 10.0);  // 20-35°C range
+   // steamTemperature = 95.0 + (random(0, 100) / 10.0);  // 95-105°C range
+   // flameState = true;
     
     Serial.print("Room Temp: ");
     Serial.print(roomTemperature);
