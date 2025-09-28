@@ -1,21 +1,31 @@
-//#include <ESP8266WiFi.h>
-//#include <WiFiClient.h>
-//#include <ESP8266WebServer.h>
-#include <WiFi.h>
-#include <WebServer.h>
-#include "SPIFFS.h"
+#include <ESP8266WiFi.h>
+#include <WiFiClient.h>
+#include <ESP8266WebServer.h>
+//#include <WiFi.h>
+//#include <WebServer.h>
+//#include "SPIFFS.h"
 
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <OpenTherm.h>
 #include <ArduinoJson.h>
-//#include <FS.h>
+#include <FS.h>
+
+#include "ThingSpeak.h"
+
+WiFiClient  client;
+
+#define SECRET_CH_ID 2018752                                 // replace 0000000 with your channel number
+#define SECRET_WRITE_APIKEY "C27QA27ACABXEU12"                           // replace XYZ with your channel write API Key
+
+unsigned long myChannelNumber = SECRET_CH_ID;
+const char * myWriteAPIKey = SECRET_WRITE_APIKEY;
 
 // WiFi credentials
-//const char* ssid = "KEM_QTECH";
-//const char* password = "kemerovskaya";
-const char* ssid = "cv_home";
-const char* password = "naksitral";
+const char* ssid = "KEM_QTECH";
+const char* password = "kemerovskaya";
+//const char* ssid = "cv_home";
+//const char* password = "naksitral";
 
 //Master OpenTherm Shield pins configuration
 const int OT_IN_PIN = 5;  //4 for ESP8266 (D2), 21 for ESP32
@@ -25,8 +35,8 @@ const int OT_OUT_PIN = 4; //5 for ESP8266 (D1), 22 for ESP32
 const int ROOM_TEMP_SENSOR_PIN = 14; //14 for ESP8266 (D5), 18 for ESP32
 
 
-//ESP8266WebServer server(80);
-WebServer server(80);
+ESP8266WebServer server(80);
+//WebServer server(80);
 
 // Variables to display
 float sp = 24, //set point
@@ -54,6 +64,7 @@ bool button2State = false;
 bool button3State = false;
 bool flameState = false;
 unsigned long lastUpdate = 0;
+unsigned long lastUpdate2 = 0;
 
 OneWire oneWire(ROOM_TEMP_SENSOR_PIN);
 DallasTemperature sensors(&oneWire);
@@ -93,6 +104,28 @@ float pid(float sp, float pv, float pv_last, float& ierr, float dt) {
   return op;
 }
 
+void updateData2()
+{ 
+
+  // set the fields with the values
+  ThingSpeak.setField(1, roomTemperature);
+  ThingSpeak.setField(2, flameState);
+  ThingSpeak.setField(3, steamTemperature);
+ 
+  // Write value to Field 1 of a ThingSpeak Channel
+  int httpCode = ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
+
+  if (httpCode == 200) {
+    Serial.println("Channel write successful.");
+  }
+  else {
+    Serial.println("Problem writing to channel. HTTP error code " + String(httpCode));
+  }
+  //httpCode = ThingSpeak.writeField(myChannelNumber, 2, flameState, myWriteAPIKey);
+  //httpCode = ThingSpeak.writeField(myChannelNumber, 3, steamTemperature, myWriteAPIKey);
+
+
+}
 void updateData()
 { 
   unsigned long response = ot.setBoilerStatus(enableCentralHeating, enableHotWater, enableCooling,enableOutsideTemperatureCompensation,enableCentralHeating2);
@@ -312,22 +345,26 @@ void setup() {
   
   server.begin();
   Serial.println("HTTP server started");
+
+  ThingSpeak.begin(client);
+  Serial.println("ThingSpeak started");
 }
 
 void loop() {
   server.handleClient();
   
+  if (millis() - lastUpdate2 > 60000) {
+    lastUpdate2 = millis();
+    updateData2();
+  }
+  
+
   // Update temperatures every 2 seconds (simulated data)
   if (millis() - lastUpdate > 2000) {
     lastUpdate = millis();
 
     updateData();
-    
-    // Simulate temperature changes
-   // roomTemperature = 40.0 + (random(0, 150) / 10.0);  // 20-35°C range
-   // waterTemperature = 40.0 + (random(0, 150) / 10.0);  // 20-35°C range
-   // steamTemperature = 95.0 + (random(0, 100) / 10.0);  // 95-105°C range
-   // flameState = true;
+
     
     Serial.print("Room Temp: ");
     Serial.print(roomTemperature);

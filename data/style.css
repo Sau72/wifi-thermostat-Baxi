@@ -122,6 +122,13 @@ h1 {
     transform: scale(1.1);
 }
 
+.slider-values {
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    margin-bottom: 15px;
+}
+
 .slider-value {
     font-size: 1.5em;
     font-weight: bold;
