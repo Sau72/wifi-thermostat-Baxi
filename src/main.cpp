@@ -79,7 +79,7 @@ float getTemp() {
 }
 
 float pid(float sp, float pv, float pv_last, float& ierr, float dt) {    
-  float KP = 30;
+  float KP = 10;
   float KI = 0.02;  
   // upper and lower bounds on heater level
   float ophi = 80;
