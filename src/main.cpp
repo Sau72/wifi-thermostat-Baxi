@@ -1,10 +1,15 @@
-#include <ESP8266WiFi.h>
-#include <WiFiClient.h>
-#include <ESP8266WebServer.h>
-//#include <WiFi.h>
-//#include <WebServer.h>
-//#include "SPIFFS.h"
+//#ifdef ESP8266
+  #include <ESP8266WiFi.h>
+  #include <ESP8266WebServer.h>
+//#endif
 
+//#ifdef ESP32
+// #include <WiFi.h>
+//  #include <WebServer.h>
+//  #include "SPIFFS.h"
+//#endif
+
+#include <WiFiClient.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <OpenTherm.h>
@@ -13,11 +18,28 @@
 
 #include "ThingSpeak.h"
 
+#include <config.h>
+
+#include <FastBot.h>
+#include "TelegramHandler.h"
+
+
+// Timezone definition
+#include <time.h>
+#define MYTZ "CET+5CEST,M3.5.0,M10.5.0/3"
+
+FastBot bot(BOTtoken);
+
+// Create instances
+TelegramHandler telegramBot(bot);
+
+
 WiFiClient  client;
 
 #define SECRET_CH_ID 2018752                                 // replace 0000000 with your channel number
 #define SECRET_WRITE_APIKEY "C27QA27ACABXEU12"                           // replace XYZ with your channel write API Key
 
+//ThingSpeak
 unsigned long myChannelNumber = SECRET_CH_ID;
 const char * myWriteAPIKey = SECRET_WRITE_APIKEY;
 
@@ -46,12 +68,14 @@ ierr = 0, //integral error
 dt = 0, //time between measurements
 op = 0; //PID controller output
 unsigned long ts = 0, new_ts = 0; //timestamp
-int enableCentralHeating = false;
-int enableHotWater = false;
-int enableCooling = false;
+bool enableCentralHeating = false;
+bool enableHotWater = true;
+bool enableCooling = false;
 bool enableOutsideTemperatureCompensation = false;
 bool enableCentralHeating2 = true;
 int  dhw = 45;
+
+bool enableCentralHeatingTemp = false;
 
 float SP_Auto = 23.0; //setpoint auto mode
 float SP_Man = 47.0; //setpoint manual mode
@@ -128,7 +152,10 @@ void updateData2()
 }
 void updateData()
 { 
-  unsigned long response = ot.setBoilerStatus(enableCentralHeating, enableHotWater, enableCooling,enableOutsideTemperatureCompensation,enableCentralHeating2);
+  if (enableCentralHeating and (op < 30))
+  { enableCentralHeatingTemp = false; }
+  else { enableCentralHeatingTemp = true; }
+  unsigned long response = ot.setBoilerStatus(enableCentralHeatingTemp, enableHotWater, enableCooling,enableOutsideTemperatureCompensation,enableCentralHeating2);
   OpenThermResponseStatus responseStatus = ot.getLastResponseStatus();
   if (responseStatus != OpenThermResponseStatus::SUCCESS) {
     Serial.println("Error: Invalid boiler response " + String(response, HEX));
@@ -168,9 +195,9 @@ void updateData()
   roomTemperature = t;
   sensors.requestTemperatures(); //async temperature request
   
-  Serial.println("Current temperature is " + String(t) + " degrees C");
-  Serial.println("Current boiler temp is " + String(steamTemperature) + " degrees C");
-  Serial.println("Current DHW temp is " + String(waterTemperature) + " degrees C");
+ // Serial.println("Current temperature is " + String(t) + " degrees C");
+ // Serial.println("Current boiler temp is " + String(steamTemperature) + " degrees C");
+ // Serial.println("Current DHW temp is " + String(waterTemperature) + " degrees C");
 }
 
 
@@ -206,6 +233,18 @@ void setup() {
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
   
+  //bot
+  configTzTime(MYTZ, "time.google.com", "time.windows.com", "pool.ntp.org");
+  telegramBot.begin();
+
+  char welcome_msg[128];
+  snprintf(welcome_msg, 128,
+           "BOT Kotel online.");
+
+  // Send a message to specific userid
+  bot.sendMessage(welcome_msg, CHAT_ID);
+
+
   // Setup server routes
   server.on("/", HTTP_GET, []() {
     File file = SPIFFS.open("/index.html", "r");
@@ -365,7 +404,6 @@ void loop() {
 
     updateData();
 
-    
     Serial.print("Room Temp: ");
     Serial.print(roomTemperature);
     Serial.print(", Water Temp: ");
@@ -382,6 +420,8 @@ void loop() {
     Serial.print(button3State ? "AUTO" : "MAN");
     Serial.print(", Flame: ");
     Serial.println(flameState ? "ON" : "OFF");  
+ 
+    telegramBot.tick();
   }
   
   delay(10);
